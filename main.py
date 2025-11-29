@@ -67,32 +67,39 @@ async def search_items(product: str) -> list[dict[str, Any]]:
 
 
 class NegotiationRequest(BaseModel):
-    supplier_id: str
-    product_id: str
-    user_message: str
+    product: int
+    prompt: str
+    tactics: str
+    suppliers: list[str]
 
 
 def call_bedrock(prompt: str, system_prompt: str = "") -> str:
-    """Call Amazon Bedrock Claude model and return response text."""
+    """Call Amazon Bedrock gpt-oss-120b model and return response text."""
     messages = [{"role": "user", "content": prompt}]
+    if system_prompt:
+        messages.insert(0, {"role": "system", "content": system_prompt})
 
     body = {
-        "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 1024,
         "messages": messages,
+        "max_tokens": 1024,
+        "temperature": 0.7,
     }
-    if system_prompt:
-        body["system"] = system_prompt
 
-    response = bedrock_client.invoke_model(
-        modelId="anthropic.claude-3-sonnet-20240229-v1:0",
+    try :
+
+        response = bedrock_client.invoke_model(
+        modelId="openai.gpt-oss-120b-1:0",
         contentType="application/json",
         accept="application/json",
         body=json.dumps(body),
-    )
+        )
+    except Exception as e:
+        return f"Bedrock service is currently unavailable. {e}"
+
+
 
     result = json.loads(response["body"].read())
-    return result["content"][0]["text"]
+    return result["choices"][0]["message"]["content"]
 
 
 @app.get("/test")
@@ -105,37 +112,15 @@ async def test_bedrock() -> dict[str, Any]:
 
 @app.post("/negotiations")
 async def trigger_negotiations(request: NegotiationRequest) -> dict[str, Any]:
-    """Trigger a negotiation conversation with a supplier using Bedrock."""
+    return {"status": "not implemented"}
+
+
+@app.get("/suppliers")
+async def suppliers() -> dict[str, Any]:
     db = await get_pool()
-
-    # Fetch supplier info
-    supplier = await db.fetchrow(
-        "SELECT * FROM supplier WHERE supplier_id = $1", request.supplier_id
-    )
-    if not supplier:
-        return {"error": "Supplier not found"}
-
-    # Fetch product info
-    product = await db.fetchrow(
-        "SELECT * FROM product WHERE product_id = $1", request.product_id
-    )
-    if not product:
-        return {"error": "Product not found"}
-
-    system_prompt = f"""You are a negotiation assistant helping to negotiate with suppliers.
-Supplier: {supplier["description"]}
-Insights: {supplier.get("insights", "N/A")}
-Product: {product["product_name"]}
-Be professional and aim for the best deal."""
-
-    response_text = call_bedrock(request.user_message, system_prompt)
-
-    return {
-        "status": "success",
-        "supplier": dict(supplier),
-        "product": dict(product),
-        "response": response_text,
-    }
+    rows = await db.fetch("SELECT * FROM supplier")
+    suppliers = [dict(row) for row in rows]
+    return {"suppliers": suppliers}
 
 
 def main() -> None:
