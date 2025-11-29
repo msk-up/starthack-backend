@@ -5,15 +5,19 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+from agents import NegotiationAgent
+
 load_dotenv()
 
 import asyncpg
 import boto3
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 DATABASE_URL = os.environ["DB_URL"]
 AWS_REGION = os.environ.get("AWS_REGION", "eu-west-1")
+FRONTEND_ORIGINS = os.environ.get("FRONTEND_ORIGINS", "")
 
 bedrock_client = boto3.client("bedrock-runtime", region_name=AWS_REGION)
 
@@ -30,6 +34,15 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Health API", version="0.1.0", lifespan=lifespan)
+
+allowed_origins = [origin.strip() for origin in FRONTEND_ORIGINS.split(",") if origin.strip()] or ["*"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 async def get_pool() -> asyncpg.Pool:
@@ -66,11 +79,6 @@ async def search_items(product: str) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
-class NegotiationRequest(BaseModel):
-    product: int
-    prompt: str
-    tactics: str
-    suppliers: list[str]
 
 
 def call_bedrock(prompt: str, system_prompt: str = "") -> str:
@@ -102,16 +110,48 @@ def call_bedrock(prompt: str, system_prompt: str = "") -> str:
     return result["choices"][0]["message"]["content"]
 
 
-@app.get("/test")
-async def test_bedrock() -> dict[str, Any]:
-    """Test Bedrock integration with a simple prompt."""
-    prompt = "Explain the benefits of using Amazon Bedrock for AI applications."
-    response_text = call_bedrock(prompt)
-    return {"response": response_text}
+
+async def crate_negotiation_agent(supplier_id: str,tactics: str, product: str)h->str:
+
+    db = await get_pool()
+
+    row = await db.fetch("SELECT * FROM supplier WHERE supplier_name = $1 LIMIT 1", supplier_id)
+    insights = row[0]['insights']
+    prompt = f'''
+
+    
 
 
-@app.post("/negotiations")
+    '''
+
+
+
+
+
+
+
+class NegotiationRequest(BaseModel):
+    product: str
+    prompt: str
+    tactics: str
+    suppliers: list[str]
+
+@app.post("/negotiate")
 async def trigger_negotiations(request: NegotiationRequest) -> dict[str, Any]:
+    db = await get_pool()
+    for supplier in request.suppliers:
+        insights_row = await db.fetch("SELECT * FROM supplier WHERE supplier_name = $1 LIMIT 1", supplier)
+        insights = insights_row[0]['insights']
+        agent  = NegotiationAgent("",insights, request.product)
+
+
+
+
+
+
+
+
+    
     return {"status": "not implemented"}
 
 
