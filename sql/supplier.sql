@@ -23,6 +23,13 @@ CREATE TABLE IF NOT EXISTS message (
     message_text TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS instructions (
+    supplier_id UUID NOT NULL REFERENCES supplier(supplier_id) ON DELETE CASCADE,
+    ng_id UUID NOT NULL REFERENCES agent(ng_id) ON DELETE CASCADE,
+    instructions TEXT NOT NULL,
+    PRIMARY KEY (supplier_id, ng_id)
+);
+
 CREATE TABLE IF NOT EXISTS product (
     product_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     supplier_id UUID NOT NULL REFERENCES supplier(supplier_id) ON DELETE CASCADE,

@@ -139,10 +139,16 @@ class NegotiationRequest(BaseModel):
 @app.post("/negotiate")
 async def trigger_negotiations(request: NegotiationRequest) -> dict[str, Any]:
     db = await get_pool()
+
     for supplier in request.suppliers:
         insights_row = await db.fetch("SELECT * FROM supplier WHERE supplier_name = $1 LIMIT 1", supplier)
         insights = insights_row[0]['insights']
         agent  = NegotiationAgent("",insights, request.product)
+        agent.send_message()
+        ## safe in db
+        ## callback once a response from the oponent is found
+
+        
 
 
 
