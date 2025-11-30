@@ -188,7 +188,7 @@ email_watcher_task: asyncio.Task | None = None
 async def lifespan(app: FastAPI):
     global pool, email_watcher_task
     logger.info("Starting application...")
-    pool = await asyncpg.create_pool(DATABASE_URL,statement_cache_size=0)
+    pool = await asyncpg.create_pool(DATABASE_URL, statement_cache_size=0)
     logger.info("Database pool created")
 
     # Login email client if credentials are provided
@@ -494,18 +494,37 @@ async def negotiation_status(negotiation_id: str) -> dict[str, Any]:
     response = []
     for row in rows:
         messages = await db.fetch(
-            "SELECT * FROM message WHERE ng_id = $1 AND supplier_id = $2",
+            "SELECT * FROM message WHERE ng_id = $1 AND supplier_id = $2 ORDER BY message_timestamp DESC",
             negotiation_id,
             row["sup_id"],
         )
+
+        # Check if any message in this conversation is marked as completed
+        is_completed = any(msg.get("completed", False) for msg in messages)
+
+        # Get supplier name
+        supplier = await db.fetchrow(
+            "SELECT supplier_name FROM supplier WHERE supplier_id = $1",
+            row["sup_id"],
+        )
+
         response.append(
             {
                 "supplier_id": str(row["sup_id"]),
+                "supplier_name": supplier["supplier_name"] if supplier else None,
                 "message_count": len(messages),
+                "completed": is_completed,
             }
         )
 
-    return {"negotiation_id": negotiation_id, "agents": response}
+    # Check if all supplier negotiations are completed
+    all_completed = all(agent["completed"] for agent in response) if response else False
+
+    return {
+        "negotiation_id": negotiation_id,
+        "all_completed": all_completed,
+        "agents": response,
+    }
 
 
 @app.get("/get_negotations")
