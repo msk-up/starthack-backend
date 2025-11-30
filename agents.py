@@ -11,7 +11,7 @@ class Message(BaseModel):
 
 
 class NegotiationAgent:
-    async def __init__(
+    def __init__(
         self,
         db_pool: Any,
         client: Any,
@@ -47,7 +47,7 @@ class NegotiationAgent:
         return conversation
 
     async def send_message(self) -> str:
-        conversation = self._build_conversation()
+        conversation = await self._build_conversation()
         if not conversation:
             # raise ValueError("No conversation history available to send")
             pass
@@ -80,17 +80,7 @@ class NegotiationAgent:
         return reply
 
 
-##class Summarize():
-
-
-class OrchestratorAgent(BaseModel):
-    db_pool: Any
-    client: Any
-    sys_prompt: str
-    strategy: str
-    ng_id: str
-    product: str
-
+class OrchestratorAgent:
     def __init__(
         self,
         db_pool: Any,

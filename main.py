@@ -5,20 +5,18 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from dotenv import load_dotenv
-
-from agents import NegotiationAgent
 from pydantic import BaseModel
-from fastapi import HTTPException
+from fastapi import HTTPException, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import asyncpg
+import boto3
+
+# Local imports
 from email_client import EmailClient
 from agents import NegotiationAgent, OrchestratorAgent
 from router import EmailEventRouter, NegotiationSession
 
 load_dotenv()
-
-import asyncpg
-import boto3
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 
 DATABASE_URL = os.environ["DB_URL"]
 AWS_REGION = os.environ.get("AWS_REGION", "eu-west-1")
@@ -41,9 +39,7 @@ You might want to give them information about the progress of other agents as we
 their behavior and if requested by the user make smart decisions on how to reduce to overall price of the product through clever
 negotiation tactics advice to the other agents, which might include the recommendation to present the supplier with a  
 competing offer from another supplier that your agents are alo negotiating with.
-
 """
-
 
 bedrock_client = boto3.client("bedrock-runtime", region_name=AWS_REGION)
 
@@ -137,12 +133,9 @@ def call_bedrock(prompt: str, system_prompt: str = "") -> str:
     return result["choices"][0]["message"]["content"]
 
 
-<<<<<<< HEAD
 # FIXED SYNTAX ERROR HERE
 async def crate_negotiation_agent(supplier_id: str,tactics: str, product: str) -> str:
-
     db = await get_pool()
-
     row = await db.fetch("SELECT * FROM supplier WHERE supplier_name = $1 LIMIT 1", supplier_id)
     if not row: return ""
     insights = row[0]['insights']
@@ -187,8 +180,6 @@ async def email_send_endpoint(req: SendEmailRequest):
 
 # ---------------------------
 
-=======
->>>>>>> main
 class NegotiationRequest(BaseModel):
     product: str
     prompt: str
@@ -232,17 +223,6 @@ async def trigger_negotiations(request: NegotiationRequest) -> dict[str, Any]:
     )
 
     for supplier in request.suppliers:
-<<<<<<< HEAD
-        insights_row = await db.fetch("SELECT * FROM supplier WHERE supplier_name = $1 LIMIT 1", supplier)
-        if not insights_row: continue
-        insights = insights_row[0]['insights']
-        agent  = NegotiationAgent(pool, bedrock_client, "", insights, request.product) # Passed required args
-        # agent.send_message()
-        ## safe in db
-        ## callback once a response from the oponent is found
-
-    return {"status": "not implemented"}
-=======
         # Save negotiator agent to DB
         await db.execute(
             """
@@ -306,10 +286,7 @@ async def negotiation_status(negotiation_id: str) -> dict[str, Any]:
         )
 
     return {"negotiation_id": negotiation_id, "agents": response}
->>>>>>> main
 
-
-# Removed duplicate @app.get("/suppliers") as it was already defined above
 
 def main() -> None:
     import uvicorn
