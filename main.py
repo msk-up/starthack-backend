@@ -6,6 +6,10 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+from agents import NegotiationAgent
+from pydantic import BaseModel
+from fastapi import HTTPException
+from email_client import EmailClient
 from agents import NegotiationAgent, OrchestratorAgent
 from router import EmailEventRouter, NegotiationSession
 
@@ -15,7 +19,6 @@ import asyncpg
 import boto3
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 
 DATABASE_URL = os.environ["DB_URL"]
 AWS_REGION = os.environ.get("AWS_REGION", "eu-west-1")
@@ -45,6 +48,8 @@ competing offer from another supplier that your agents are alo negotiating with.
 bedrock_client = boto3.client("bedrock-runtime", region_name=AWS_REGION)
 
 pool: asyncpg.Pool | None = None
+# --- Initialize Email Client ---
+email_client = EmailClient()
 email_router = EmailEventRouter()
 active_sessions: dict[str, NegotiationSession] = {}
 
@@ -132,6 +137,58 @@ def call_bedrock(prompt: str, system_prompt: str = "") -> str:
     return result["choices"][0]["message"]["content"]
 
 
+<<<<<<< HEAD
+# FIXED SYNTAX ERROR HERE
+async def crate_negotiation_agent(supplier_id: str,tactics: str, product: str) -> str:
+
+    db = await get_pool()
+
+    row = await db.fetch("SELECT * FROM supplier WHERE supplier_name = $1 LIMIT 1", supplier_id)
+    if not row: return ""
+    insights = row[0]['insights']
+    prompt = f'''
+    Negotiate for {product} with tactics {tactics}. Insights: {insights}
+    '''
+    return prompt
+
+
+# --- NEW EMAIL ENDPOINTS ---
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+@app.post("/email/login")
+async def email_login_endpoint(creds: LoginRequest):
+    """
+    Exposed endpoint for frontend to log in the email client.
+    """
+    try:
+        await email_client.email_login(creds.email, creds.password)
+        return {"status": "success", "message": "Logged in successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+class SendEmailRequest(BaseModel):
+    to_email: str
+    subject: str
+    body: str
+
+@app.post("/email/send")
+async def email_send_endpoint(req: SendEmailRequest):
+    """
+    Exposed endpoint to send emails using logged in credentials.
+    """
+    try:
+        await email_client.email_send(req.to_email, req.subject, req.body)
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ---------------------------
+
+=======
+>>>>>>> main
 class NegotiationRequest(BaseModel):
     product: str
     prompt: str
@@ -175,6 +232,17 @@ async def trigger_negotiations(request: NegotiationRequest) -> dict[str, Any]:
     )
 
     for supplier in request.suppliers:
+<<<<<<< HEAD
+        insights_row = await db.fetch("SELECT * FROM supplier WHERE supplier_name = $1 LIMIT 1", supplier)
+        if not insights_row: continue
+        insights = insights_row[0]['insights']
+        agent  = NegotiationAgent(pool, bedrock_client, "", insights, request.product) # Passed required args
+        # agent.send_message()
+        ## safe in db
+        ## callback once a response from the oponent is found
+
+    return {"status": "not implemented"}
+=======
         # Save negotiator agent to DB
         await db.execute(
             """
@@ -238,15 +306,10 @@ async def negotiation_status(negotiation_id: str) -> dict[str, Any]:
         )
 
     return {"negotiation_id": negotiation_id, "agents": response}
+>>>>>>> main
 
 
-@app.get("/suppliers")
-async def suppliers() -> dict[str, Any]:
-    db = await get_pool()
-    rows = await db.fetch("SELECT * FROM supplier")
-    suppliers = [dict(row) for row in rows]
-    return {"suppliers": suppliers}
-
+# Removed duplicate @app.get("/suppliers") as it was already defined above
 
 def main() -> None:
     import uvicorn

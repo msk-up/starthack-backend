@@ -49,7 +49,8 @@ class NegotiationAgent:
     async def send_message(self) -> str:
         conversation = self._build_conversation()
         if not conversation:
-            raise ValueError("No conversation history available to send")
+            # raise ValueError("No conversation history available to send")
+            pass
 
         body = {
             "messages": conversation,

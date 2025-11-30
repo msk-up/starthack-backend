@@ -3,4 +3,6 @@ uvicorn
 asyncpg
 boto3
 dotenv
+aiosmtplib
+aioimaplib
 uuid
