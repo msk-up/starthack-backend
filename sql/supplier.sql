@@ -3,6 +3,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE TABLE IF NOT EXISTS supplier (
     supplier_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     supplier_name TEXT,
+    supplier_email TEXT,
     description TEXT NOT NULL,
     insights TEXT,
     image_url TEXT
@@ -58,3 +59,10 @@ CREATE TABLE IF NOT EXISTS email_config (
     smtp_server TEXT DEFAULT 'smtp.gmail.com',
     is_active BOOLEAN DEFAULT TRUE
 );
+
+-- MIGRATIONS: Add columns to existing tables if they don't exist
+ALTER TABLE supplier ADD COLUMN IF NOT EXISTS supplier_email TEXT;
+
+-- Fix message role constraint to include 'supplier'
+ALTER TABLE message DROP CONSTRAINT IF EXISTS message_role_check;
+ALTER TABLE message ADD CONSTRAINT message_role_check CHECK (role IN ('negotiator', 'orchestrator', 'supplier'));

@@ -1,8 +1,11 @@
 from typing import Any, Callable, Coroutine
 from dataclasses import dataclass, field
 import asyncio
+import logging
 
 from agents import NegotiationAgent, OrchestratorAgent
+
+logger = logging.getLogger("negotiation.router")
 
 
 @dataclass
@@ -49,6 +52,7 @@ class EmailEventRouter:
         """Register a handler for a specific (ng_id, supplier_id) pair."""
         key = _make_key(ng_id, supplier_id)
         self._handlers[key] = handler
+        logger.info(f"Registered handler for key: {key}")
 
     def set_default_handler(
         self, handler: Callable[[EmailEvent], Coroutine[Any, Any, None]]
@@ -66,17 +70,34 @@ class EmailEventRouter:
         Push an email event to be routed.
         Looks up handler by (ng_id, supplier_id) and spawns async task.
         """
+        logger.info(
+            f"Router.push() called with ng_id={event.ng_id}, supplier_id={event.supplier_id}"
+        )
+        logger.info(f"Available handler keys: {list(self._handlers.keys())}")
+
         handler = None
 
         if event.ng_id and event.supplier_id:
             key = _make_key(event.ng_id, event.supplier_id)
+            logger.info(f"Looking up handler for key: {key}")
             handler = self._handlers.get(key)
+            if handler:
+                logger.info(f"Found handler for key: {key}")
+            else:
+                logger.warning(f"No handler found for key: {key}")
 
         if not handler and self._default_handler:
+            logger.info("Using default handler")
             handler = self._default_handler
 
         if handler:
+            logger.info("Spawning async task for handler...")
             asyncio.create_task(handler(event))
+            logger.info("Handler task spawned")
+        else:
+            logger.warning(
+                f"No handler found for event - ng_id={event.ng_id}, supplier_id={event.supplier_id}"
+            )
 
 
 class NegotiationSession:
@@ -113,7 +134,18 @@ class NegotiationSession:
         """Create an email handler for a specific supplier."""
 
         async def handler(event: EmailEvent) -> None:
+            logger.info(
+                f"[Session {self.ng_id}] Handler triggered for supplier {supplier_id}"
+            )
+            logger.info(f"[Session {self.ng_id}] Email subject: {event.subject}")
+            logger.info(
+                f"[Session {self.ng_id}] Email body preview: {event.body[:200] if event.body else '(empty)'}..."
+            )
+
             # 1. Store the incoming message in DB
+            logger.info(
+                f"[Session {self.ng_id}] Saving supplier message to database..."
+            )
             await self.db_pool.execute(
                 """
                 INSERT INTO message (ng_id, supplier_id, role, message_text)
@@ -124,14 +156,27 @@ class NegotiationSession:
                 "supplier",
                 event.body,
             )
+            logger.info(f"[Session {self.ng_id}] Supplier message saved")
 
             # 2. Orchestrator revises strategy for all agents
+            logger.info(
+                f"[Session {self.ng_id}] Calling orchestrator.generate_new_instructions()..."
+            )
             await self.orchestrator.generate_new_instructions()
+            logger.info(f"[Session {self.ng_id}] Orchestrator instructions updated")
 
             # 3. Agent for this supplier sends response
             agent = self._agents.get(supplier_id)
             if agent:
+                logger.info(
+                    f"[Session {self.ng_id}] Calling agent.send_message() for supplier {supplier_id}..."
+                )
                 await agent.send_message()
+                logger.info(f"[Session {self.ng_id}] Agent response sent")
+            else:
+                logger.error(
+                    f"[Session {self.ng_id}] No agent found for supplier {supplier_id}"
+                )
 
         return handler
 

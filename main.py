@@ -1,6 +1,8 @@
+import asyncio
 import json
 import os
 import uuid
+import logging
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -17,6 +19,12 @@ from agents import NegotiationAgent, OrchestratorAgent
 from router import EmailEventRouter, NegotiationSession
 
 load_dotenv()
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger("negotiation")
 
 DATABASE_URL = os.environ["DB_URL"]
 AWS_REGION = os.environ.get("AWS_REGION", "eu-west-1")
@@ -49,14 +57,169 @@ email_client = EmailClient()
 email_router = EmailEventRouter()
 active_sessions: dict[str, NegotiationSession] = {}
 
+EMAIL_ADDRESS = os.environ.get("EMAIL_USER")
+EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD")
+
+
+async def email_watcher():
+    """Background task that watches for incoming emails and routes them."""
+    import re
+
+    logger.info("Starting email watcher task...")
+    logger.info(f"Email client logged in: {email_client.email_address is not None}")
+    logger.info(f"Active sessions count: {len(active_sessions)}")
+
+    try:
+        logger.info("Starting email_trigger generator...")
+        async for email_data in email_client.email_trigger():
+            logger.info("=" * 50)
+            logger.info("EMAIL WATCHER: Received email from email_trigger")
+            logger.info(
+                f"New email received from: {email_data['sender']}, subject: {email_data['subject']}"
+            )
+
+            # Try to find matching supplier by email
+            db = await get_pool()
+            sender_email = email_data["sender"]
+
+            # Extract email from "Name <email@domain.com>" format if needed
+            email_match = re.search(r"<([^>]+)>", sender_email)
+            if email_match:
+                sender_email = email_match.group(1)
+
+            supplier_row = await db.fetchrow(
+                "SELECT supplier_id FROM supplier WHERE supplier_email = $1",
+                sender_email,
+            )
+
+            if not supplier_row:
+                logger.warning(f"No supplier found for email: {email_data['sender']}")
+                continue
+
+            # Try to extract ng_id and sup_id from subject line [REF-xxxxxxxx-yyyyyyyy]
+            ng_id = None
+            supplier_id = None
+            subject = email_data["subject"]
+            ref_match = re.search(
+                r"\[REF-([a-f0-9]{8})-([a-f0-9]{8})\]", subject, re.IGNORECASE
+            )
+
+            if ref_match:
+                ng_prefix = ref_match.group(1)
+                sup_prefix = ref_match.group(2)
+                logger.info(
+                    f"Found reference in subject: ng={ng_prefix}, sup={sup_prefix}"
+                )
+
+                # Find the full ng_id that starts with this prefix
+                for session_ng_id in active_sessions.keys():
+                    if session_ng_id.startswith(ng_prefix):
+                        ng_id = session_ng_id
+                        break
+
+                # Also check DB if not in active sessions
+                if not ng_id:
+                    ng_row = await db.fetchrow(
+                        "SELECT ng_id FROM negotiation WHERE CAST(ng_id AS TEXT) LIKE $1",
+                        f"{ng_prefix}%",
+                    )
+                    if ng_row:
+                        ng_id = str(ng_row["ng_id"])
+
+                # Find the full supplier_id that starts with this prefix
+                sup_row = await db.fetchrow(
+                    "SELECT supplier_id FROM supplier WHERE CAST(supplier_id AS TEXT) LIKE $1",
+                    f"{sup_prefix}%",
+                )
+                if sup_row:
+                    supplier_id = str(sup_row["supplier_id"])
+                    logger.info(f"Matched supplier from subject: {supplier_id}")
+
+            # Fallback: try to match by sender email if no REF tag
+            if not supplier_id and supplier_row:
+                supplier_id = str(supplier_row["supplier_id"])
+                logger.info(f"Matched supplier by email: {supplier_id}")
+
+            # Fallback: find any active negotiation for this supplier
+            if not ng_id and supplier_id:
+                logger.info("No ng_id in subject, searching active sessions...")
+                for session_ng_id, session in active_sessions.items():
+                    if supplier_id in session._agents:
+                        ng_id = session_ng_id
+                        break
+
+            if not ng_id:
+                logger.warning(
+                    f"No active negotiation found for supplier: {supplier_id}"
+                )
+                continue
+
+            logger.info(
+                f"Routing email to negotiation: {ng_id}, supplier: {supplier_id}"
+            )
+
+            # Create event and push to router
+            from router import EmailEvent
+
+            event = EmailEvent(
+                sender=email_data["sender"],
+                subject=email_data["subject"],
+                body=email_data["body"],
+                supplier_id=supplier_id,
+                ng_id=ng_id,
+                raw=email_data,
+            )
+            logger.info(f"Pushing event to email_router...")
+            await email_router.push(event)
+            logger.info(f"Event pushed successfully")
+            logger.info("=" * 50)
+
+    except asyncio.CancelledError:
+        logger.info("Email watcher cancelled")
+    except Exception as e:
+        logger.error(f"Email watcher error: {e}", exc_info=True)
+
+
+email_watcher_task: asyncio.Task | None = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global pool
+    global pool, email_watcher_task
+    logger.info("Starting application...")
     pool = await asyncpg.create_pool(DATABASE_URL)
+    logger.info("Database pool created")
+
+    # Login email client if credentials are provided
+    if EMAIL_ADDRESS and EMAIL_PASSWORD:
+        try:
+            logger.info(f"Logging in email client as {EMAIL_ADDRESS}...")
+            await email_client.email_login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+            logger.info("Email client logged in successfully")
+
+            # Start email watcher background task
+            email_watcher_task = asyncio.create_task(email_watcher())
+            logger.info("Email watcher started")
+        except Exception as e:
+            logger.error(f"Email login failed: {e}")
+    else:
+        logger.warning(
+            "No email credentials provided - email sending/receiving disabled"
+        )
+
     yield
+
+    logger.info("Shutting down...")
+    if email_watcher_task:
+        email_watcher_task.cancel()
+        try:
+            await email_watcher_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("Email watcher stopped")
     if pool:
         await pool.close()
+        logger.info("Database pool closed")
 
 
 app = FastAPI(title="Health API", version="0.1.0", lifespan=lifespan)
@@ -198,9 +361,14 @@ class NegotiationRequest(BaseModel):
 
 @app.post("/negotiate")
 async def trigger_negotiations(request: NegotiationRequest) -> dict[str, Any]:
+    logger.info(f"Starting negotiation for product: {request.product}")
+    logger.info(f"Suppliers: {request.suppliers}")
+    logger.info(f"Tactics: {request.tactics}")
+
     db = await get_pool()
 
     ng_id = str(uuid.uuid4())
+    logger.info(f"Created negotiation ID: {ng_id}")
 
     # Save negotiation to DB
     await db.execute(
@@ -212,6 +380,7 @@ async def trigger_negotiations(request: NegotiationRequest) -> dict[str, Any]:
         request.product,
         request.tactics,
     )
+    logger.info("Negotiation saved to database")
 
     orchestrator = OrchestratorAgent(
         client=bedrock_client,
@@ -221,6 +390,7 @@ async def trigger_negotiations(request: NegotiationRequest) -> dict[str, Any]:
         db_pool=db,
         ng_id=ng_id,
     )
+    logger.info("Orchestrator agent created")
 
     # Create a session to manage this negotiation
     session = NegotiationSession(
@@ -230,8 +400,27 @@ async def trigger_negotiations(request: NegotiationRequest) -> dict[str, Any]:
         orchestrator=orchestrator,
         router=email_router,
     )
+    logger.info("Negotiation session created")
 
     for supplier in request.suppliers:
+        logger.info(f"Processing supplier: {supplier}")
+
+        # Fetch supplier info from DB
+        supplier_row = await db.fetchrow(
+            "SELECT supplier_name, supplier_email, description, insights FROM supplier WHERE supplier_id = $1",
+            supplier,
+        )
+        if not supplier_row:
+            logger.warning(f"Supplier {supplier} not found in database, skipping")
+            continue
+
+        supplier_name = supplier_row["supplier_name"] or "Supplier"
+        supplier_email = supplier_row["supplier_email"]
+        supplier_description = supplier_row["description"] or ""
+        supplier_insights = supplier_row["insights"] or ""
+
+        logger.info(f"Supplier: {supplier_name}, email: {supplier_email or 'NOT SET'}")
+
         # Save negotiator agent to DB
         await db.execute(
             """
@@ -242,6 +431,7 @@ async def trigger_negotiations(request: NegotiationRequest) -> dict[str, Any]:
             supplier,
             NEGOTIATOR_AGENT_SYSTEM_PROMPT,
         )
+        logger.info(f"Agent saved to database for supplier {supplier}")
 
         agent = NegotiationAgent(
             db_pool=db,
@@ -250,12 +440,32 @@ async def trigger_negotiations(request: NegotiationRequest) -> dict[str, Any]:
             sup_id=supplier,
             client=bedrock_client,
             product=request.product,
+            email_client=email_client,
+            supplier_email=supplier_email,
+            supplier_name=supplier_name,
+            supplier_insights=supplier_insights,
         )
+        logger.info(f"NegotiationAgent created for supplier {supplier}")
+
         # Register agent with session - this sets up the email handler
         session.add_agent(supplier, agent)
+        logger.info(f"Agent registered with session for supplier {supplier}")
+
+        # Send initial message to supplier asking about offers
+        logger.info(f"Sending initial message to supplier {supplier}...")
+        reply = await agent.send_initial_message(context=request.prompt)
+        logger.info(f"Initial message sent to supplier {supplier}")
+        logger.debug(
+            f"Message content: {reply[:100]}..."
+            if len(reply) > 100
+            else f"Message content: {reply}"
+        )
 
     # Store session for later reference
     active_sessions[ng_id] = session
+    logger.info(
+        f"Negotiation {ng_id} started successfully with {len(request.suppliers)} suppliers"
+    )
 
     return {
         "negotiation_id": ng_id,
