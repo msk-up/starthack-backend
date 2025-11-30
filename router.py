@@ -162,10 +162,18 @@ class NegotiationSession:
             logger.info(
                 f"[Session {self.ng_id}] Calling orchestrator.generate_new_instructions()..."
             )
-            await self.orchestrator.generate_new_instructions()
+            completion_status = await self.orchestrator.generate_new_instructions()
             logger.info(f"[Session {self.ng_id}] Orchestrator instructions updated")
 
-            # 3. Agent for this supplier sends response
+            # 3. Check if this supplier's negotiation is completed
+            is_completed = completion_status.get(supplier_id, False)
+            if is_completed:
+                logger.info(
+                    f"[Session {self.ng_id}] Negotiation with supplier {supplier_id} is COMPLETED - not sending follow-up"
+                )
+                return
+
+            # 4. Agent for this supplier sends response
             agent = self._agents.get(supplier_id)
             if agent:
                 logger.info(

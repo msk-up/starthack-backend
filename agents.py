@@ -292,11 +292,14 @@ class OrchestratorAgent:
             conversation.append({"role": message.role, "content": message.content})
         return conversation
 
-    async def generate_new_instructions(self) -> None:
+    async def generate_new_instructions(self) -> dict[str, bool]:
         """
         Reads messages for THIS negotiation only, groups by supplier,
         then asks the model to revise instructions for each supplier agent.
         Updates the instructions table.
+
+        Returns:
+            dict mapping supplier_id -> completed status (True if conversation is finished)
         """
         logger.info(f"[Orchestrator {self.ng_id}] Generating new instructions...")
 
@@ -386,8 +389,15 @@ Respond with revised instructions using EXACTLY this format (one block per suppl
 [INSTRUCTION]
 ng_id: {self.ng_id}
 supplier_id: <copy the exact supplier_id UUID from above>
-text: <your concise, actionable instruction - 2-3 sentences max>
+completed: <true or false - set to true ONLY if the negotiation has reached a final agreement, been rejected, or explicitly ended>
+text: <your concise, actionable instruction - 2-3 sentences max. If completed=true, summarize the outcome>
 [/INSTRUCTION]
+
+A negotiation is COMPLETED when:
+- Both parties have agreed on terms (price, quantity, delivery, etc.)
+- The supplier has explicitly declined/rejected the deal
+- Either party has explicitly ended the negotiation
+- A final purchase order or contract is confirmed
 
 RULES:
 - Use the exact UUIDs provided above, do NOT use placeholders
@@ -421,6 +431,7 @@ RULES:
             r"\[INSTRUCTION\]\s*"
             r"ng_id:\s*(?P<ng_id>[^\n]+)\s*"
             r"supplier_id:\s*(?P<supplier_id>[^\n]+)\s*"
+            r"completed:\s*(?P<completed>[^\n]+)\s*"
             r"text:\s*(?P<text>.*?)"
             r"\[/INSTRUCTION\]",
             re.DOTALL | re.IGNORECASE,
@@ -428,17 +439,21 @@ RULES:
 
         matches = pattern.findall(reply)
         if not matches:
-            raise RuntimeError(
-                f"No valid [INSTRUCTION] blocks found in response:\n{reply}"
-            )
+            logger.warning(f"No valid [INSTRUCTION] blocks found in response:\n{reply}")
+            return {}
 
-        # 7. Upsert instructions for each agent
+        # 7. Upsert instructions for each agent and mark completion if needed
         import uuid as uuid_module
+
+        completion_status: dict[str, bool] = {}
 
         for match in matches:
             parsed_ng_id = match[0].strip()
             parsed_supplier_id = match[1].strip()
-            instructions_text = match[2].strip()
+            completed_str = match[2].strip().lower()
+            instructions_text = match[3].strip()
+
+            is_completed = completed_str in ("true", "yes", "1")
 
             if not all([parsed_ng_id, parsed_supplier_id, instructions_text]):
                 logger.warning(f"Skipping incomplete instruction block")
@@ -454,8 +469,10 @@ RULES:
                 )
                 continue
 
+            completion_status[parsed_supplier_id] = is_completed
+
             logger.info(
-                f"Upserting instruction for ng_id={parsed_ng_id}, supplier_id={parsed_supplier_id}"
+                f"Upserting instruction for ng_id={parsed_ng_id}, supplier_id={parsed_supplier_id}, completed={is_completed}"
             )
             await self.db_pool.execute(
                 """
@@ -468,3 +485,27 @@ RULES:
                 parsed_ng_id,
                 instructions_text,
             )
+
+            # If conversation is completed, mark the latest message as completed
+            if is_completed:
+                logger.info(
+                    f"[Orchestrator {self.ng_id}] Marking conversation with supplier {parsed_supplier_id} as COMPLETED"
+                )
+                # Mark the most recent message in this conversation as completed
+                await self.db_pool.execute(
+                    """
+                    UPDATE message 
+                    SET completed = TRUE 
+                    WHERE ng_id = $1 AND supplier_id = $2 
+                    AND message_id = (
+                        SELECT message_id FROM message 
+                        WHERE ng_id = $1 AND supplier_id = $2 
+                        ORDER BY message_timestamp DESC 
+                        LIMIT 1
+                    )
+                    """,
+                    parsed_ng_id,
+                    parsed_supplier_id,
+                )
+
+        return completion_status

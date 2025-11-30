@@ -188,7 +188,7 @@ email_watcher_task: asyncio.Task | None = None
 async def lifespan(app: FastAPI):
     global pool, email_watcher_task
     logger.info("Starting application...")
-    pool = await asyncpg.create_pool(DATABASE_URL)
+    pool = await asyncpg.create_pool(DATABASE_URL,statement_cache_size=0)
     logger.info("Database pool created")
 
     # Login email client if credentials are provided
@@ -479,7 +479,7 @@ async def trigger_negotiations(request: NegotiationRequest) -> dict[str, Any]:
 async def get_conversation(negotiation_id: str, supplier_id: str) -> dict[str, Any]:
     db = await get_pool()
     messages = await db.fetch(
-        "SELECT * FROM message WHERE negotiation_id = $1 AND supplier_id = $2",
+        "SELECT * FROM message WHERE ng_id = $1 AND supplier_id = $2",
         negotiation_id,
         supplier_id,
     )
