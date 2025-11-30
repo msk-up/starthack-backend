@@ -278,6 +278,35 @@ class OrchestratorAgent:
         self.ng_id = ng_id
         return
 
+    @staticmethod
+    def _summarize_text(text: str, limit: int = 240) -> str:
+        """Generate a short summary snippet for activity log."""
+        clean = " ".join(text.strip().split())
+        if len(clean) <= limit:
+            return clean
+        return clean[: limit - 3] + "..."
+
+    async def _log_activity(
+        self,
+        supplier_id: str,
+        instructions_text: str,
+        completed: bool,
+    ) -> None:
+        action = "conversation_completed" if completed else "instructions_updated"
+        summary = self._summarize_text(instructions_text)
+        await self.db_pool.execute(
+            """
+            INSERT INTO orchestrator_activity (ng_id, supplier_id, action, summary, details, completed)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            """,
+            self.ng_id,
+            supplier_id,
+            action,
+            summary,
+            instructions_text,
+            completed,
+        )
+
     async def _build_conversation(self) -> list[dict[str, str]]:
         conversation: list[dict[str, str]] = []
         if self.sys_prompt:
@@ -506,6 +535,16 @@ RULES:
                     """,
                     parsed_ng_id,
                     parsed_supplier_id,
+                )
+
+            # Log orchestrator activity for this supplier
+            try:
+                await self._log_activity(
+                    parsed_supplier_id, instructions_text, is_completed
+                )
+            except Exception as log_error:
+                logger.warning(
+                    f"[Orchestrator {self.ng_id}] Failed to log activity for supplier {parsed_supplier_id}: {log_error}"
                 )
 
         return completion_status

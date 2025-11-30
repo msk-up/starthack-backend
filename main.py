@@ -4,7 +4,7 @@ import os
 import uuid
 import logging
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Optional
 
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -524,6 +524,56 @@ async def negotiation_status(negotiation_id: str) -> dict[str, Any]:
         "negotiation_id": negotiation_id,
         "all_completed": all_completed,
         "agents": response,
+    }
+
+
+@app.get("/orchestrator_activity/{negotiation_id}")
+async def get_orchestrator_activity(
+    negotiation_id: str, supplier_id: Optional[str] = None
+) -> dict[str, Any]:
+    db = await get_pool()
+    params: list[Any] = [negotiation_id]
+    query = """
+        SELECT oa.activity_id,
+               oa.ng_id,
+               oa.supplier_id,
+               oa.activity_timestamp,
+               oa.action,
+               oa.summary,
+               oa.details,
+               oa.completed,
+               s.supplier_name
+        FROM orchestrator_activity oa
+        LEFT JOIN supplier s ON oa.supplier_id = s.supplier_id
+        WHERE oa.ng_id = $1
+    """
+    if supplier_id:
+        query += " AND oa.supplier_id = $2"
+        params.append(supplier_id)
+    query += " ORDER BY oa.activity_timestamp DESC"
+
+    rows = await db.fetch(query, *params)
+    activities = []
+    for row in rows:
+        activities.append(
+            {
+                "activity_id": str(row["activity_id"]),
+                "supplier_id": str(row["supplier_id"]) if row["supplier_id"] else None,
+                "supplier_name": row["supplier_name"],
+                "action": row["action"],
+                "summary": row["summary"],
+                "details": row["details"],
+                "completed": row["completed"],
+                "timestamp": row["activity_timestamp"].isoformat()
+                if row["activity_timestamp"]
+                else None,
+            }
+        )
+
+    return {
+        "negotiation_id": negotiation_id,
+        "count": len(activities),
+        "activities": activities,
     }
 
 
