@@ -259,14 +259,14 @@ async def email_watcher():
             supplier_id = None
             subject = email_data["subject"]
             ref_match = re.search(
-                r"\[REF-([a-f0-9]{8})-([a-f0-9]{8})\]", subject, re.IGNORECASE
+                r"\[REF-([a-f0-9]{8})-([a-f0-9-]{14})\]", subject, re.IGNORECASE
             )
 
             if ref_match:
                 ng_prefix = ref_match.group(1)
-                sup_prefix = ref_match.group(2)
+                sup_middle = ref_match.group(2)  # e.g., "0013-4000-8000" from UUID
                 logger.info(
-                    f"Found reference in subject: ng={ng_prefix}, sup={sup_prefix}"
+                    f"Found reference in subject: ng={ng_prefix}, sup_middle={sup_middle}"
                 )
 
                 # Find the full ng_id that starts with this prefix
@@ -284,13 +284,14 @@ async def email_watcher():
                     if ng_row:
                         ng_id = str(ng_row["ng_id"])
 
-                # Find the full supplier_id that starts with this prefix
+                # Find the full supplier_id using the middle part of UUID
+                # sup_middle is like "0013-4000-8000" - we search for UUIDs containing this
                 # First try to match within the negotiation's agents (more specific)
                 if ng_id:
                     sup_row = await db.fetchrow(
                         "SELECT sup_id FROM agent WHERE ng_id = $1 AND CAST(sup_id AS TEXT) LIKE $2",
                         ng_id,
-                        f"{sup_prefix}%",
+                        f"%-{sup_middle}%",
                     )
                     if sup_row:
                         supplier_id = str(sup_row["sup_id"])
@@ -302,7 +303,7 @@ async def email_watcher():
                 if not supplier_id:
                     sup_row = await db.fetchrow(
                         "SELECT supplier_id FROM supplier WHERE CAST(supplier_id AS TEXT) LIKE $1",
-                        f"{sup_prefix}%",
+                        f"%-{sup_middle}%",
                     )
                     if sup_row:
                         supplier_id = str(sup_row["supplier_id"])
