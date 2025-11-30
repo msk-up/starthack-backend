@@ -5,6 +5,7 @@ import uuid
 import logging
 from contextlib import asynccontextmanager
 from typing import Any, Optional
+from datetime import datetime
 
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -60,6 +61,161 @@ active_sessions: dict[str, NegotiationSession] = {}
 
 EMAIL_ADDRESS = os.environ.get("EMAIL_USER")
 EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD")
+
+
+def _clean_snippet(text: str | None, limit: int = 220) -> str | None:
+    if not text:
+        return None
+    compact = " ".join(text.split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 3] + "..."
+
+
+async def _collect_supplier_progress(
+    db: asyncpg.Pool, negotiation_id: str
+) -> list[dict[str, Any]]:
+    rows = await db.fetch(
+        """
+        SELECT a.sup_id, s.supplier_name, s.supplier_email
+        FROM agent a
+        LEFT JOIN supplier s ON s.supplier_id = a.sup_id
+        WHERE a.ng_id = $1
+        ORDER BY s.supplier_name NULLS LAST, a.sup_id
+        """,
+        negotiation_id,
+    )
+
+    progress: list[dict[str, Any]] = []
+    for row in rows:
+        supplier_id = row["sup_id"]
+        stats = await db.fetchrow(
+            """
+            SELECT COUNT(*) AS message_count, bool_or(completed) AS completed
+            FROM message
+            WHERE ng_id = $1 AND supplier_id = $2
+            """,
+            negotiation_id,
+            supplier_id,
+        )
+        last_message = await db.fetchrow(
+            """
+            SELECT role, message_text, completed, message_timestamp
+            FROM message
+            WHERE ng_id = $1 AND supplier_id = $2
+            ORDER BY message_timestamp DESC
+            LIMIT 1
+            """,
+            negotiation_id,
+            supplier_id,
+        )
+        instructions_row = await db.fetchrow(
+            """
+            SELECT instructions
+            FROM instructions
+            WHERE ng_id = $1 AND supplier_id = $2
+            """,
+            negotiation_id,
+            supplier_id,
+        )
+        summary_row = await db.fetchrow(
+            """
+            SELECT summary_text, created_at
+            FROM negotiation_summary
+            WHERE ng_id = $1 AND supplier_id = $2
+            """,
+            negotiation_id,
+            supplier_id,
+        )
+
+        latest_message = None
+        if last_message:
+            latest_message = {
+                "role": last_message["role"],
+                "completed": last_message["completed"],
+                "text": _clean_snippet(last_message["message_text"]),
+                "timestamp": last_message["message_timestamp"].isoformat()
+                if last_message["message_timestamp"]
+                else None,
+            }
+
+        progress.append(
+            {
+                "supplier_id": str(supplier_id),
+                "supplier_name": row["supplier_name"] or "Supplier",
+                "supplier_email": row["supplier_email"],
+                "message_count": stats["message_count"] if stats else 0,
+                "completed": bool(stats["completed"])
+                if stats and stats["completed"] is not None
+                else False,
+                "latest_message": latest_message,
+                "latest_instructions": instructions_row["instructions"]
+                if instructions_row
+                else None,
+                "final_summary": summary_row["summary_text"] if summary_row else None,
+                "summary_created_at": summary_row["created_at"].isoformat()
+                if summary_row and summary_row["created_at"]
+                else None,
+            }
+        )
+
+    return progress
+
+
+async def _generate_overview_summary(
+    negotiation: asyncpg.Record,
+    supplier_progress: list[dict[str, Any]],
+) -> str | None:
+    if not supplier_progress:
+        return None
+
+    status_lines = []
+    for status in supplier_progress:
+        line = f"{status['supplier_name']} (completed={status['completed']}, messages={status['message_count']})"
+        latest_msg = status.get("latest_message")
+        if latest_msg:
+            line += f" | last {latest_msg['role']}: {latest_msg['text']}"
+        if status.get("final_summary"):
+            line += f" | summary: {status['final_summary']}"
+        elif status.get("latest_instructions"):
+            line += f" | instructions: {status['latest_instructions']}"
+        status_lines.append(line)
+
+    context = "\n".join(status_lines)
+    prompt = f"""Provide a concise overview (<=150 words) of the negotiation for product {negotiation["product"]}.
+Highlight progress of each supplier agent, note who is completed, and call out any pending follow-ups.
+
+Context:
+{context}
+"""
+
+    body = {
+        "messages": [
+            {
+                "role": "system",
+                "content": "You summarize procurement negotiations for executives with crisp status updates.",
+            },
+            {"role": "user", "content": prompt},
+        ],
+        "max_tokens": 400,
+        "temperature": 0.4,
+    }
+
+    try:
+        response = bedrock_client.invoke_model(
+            modelId="openai.gpt-oss-120b-1:0",
+            contentType="application/json",
+            accept="application/json",
+            body=json.dumps(body),
+        )
+        result = json.loads(response["body"].read())
+        overview_text = result["choices"][0]["message"]["content"]
+        return overview_text.strip()
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.warning(
+            f"Failed to generate negotiation overview for ng_id={negotiation['ng_id']}: {exc}"
+        )
+        return None
 
 
 async def email_watcher():
@@ -620,6 +776,29 @@ async def get_negotiation_summary(
         "negotiation_id": negotiation_id,
         "count": len(summaries),
         "summaries": summaries,
+    }
+
+
+@app.get("/negotiation_overview/{negotiation_id}")
+async def get_negotiation_overview(negotiation_id: str) -> dict[str, Any]:
+    db = await get_pool()
+    negotiation = await db.fetchrow(
+        "SELECT ng_id, product, strategy FROM negotiation WHERE ng_id = $1",
+        negotiation_id,
+    )
+    if not negotiation:
+        raise HTTPException(status_code=404, detail="Negotiation not found")
+
+    supplier_progress = await _collect_supplier_progress(db, negotiation_id)
+    overview_text = await _generate_overview_summary(negotiation, supplier_progress)
+
+    return {
+        "negotiation_id": negotiation_id,
+        "product": negotiation["product"],
+        "strategy": negotiation["strategy"],
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "overview": overview_text,
+        "suppliers": supplier_progress,
     }
 
 

@@ -59,7 +59,9 @@ CREATE TABLE IF NOT EXISTS orchestrator_activity (
     action TEXT NOT NULL,
     summary TEXT,
     details TEXT,
-    completed BOOLEAN NOT NULL DEFAULT FALSE
+    completed BOOLEAN NOT NULL DEFAULT FALSE,
+    change_count INT NOT NULL DEFAULT 1,
+    UNIQUE (ng_id, supplier_id)
 );
 
 CREATE TABLE IF NOT EXISTS negotiation_summary (
@@ -124,3 +126,11 @@ ALTER TABLE agent ADD CONSTRAINT agent_ng_sup_unique UNIQUE (ng_id, sup_id);
 -- Fix message role constraint to include 'supplier'
 ALTER TABLE message DROP CONSTRAINT IF EXISTS message_role_check;
 ALTER TABLE message ADD CONSTRAINT message_role_check CHECK (role IN ('negotiator', 'orchestrator', 'supplier'));
+
+-- Add change_count and unique constraint to orchestrator_activity
+ALTER TABLE orchestrator_activity ADD COLUMN IF NOT EXISTS change_count INT NOT NULL DEFAULT 1;
+DO $$
+BEGIN
+    ALTER TABLE orchestrator_activity ADD CONSTRAINT orchestrator_activity_ng_sup_unique UNIQUE (ng_id, supplier_id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;

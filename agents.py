@@ -279,8 +279,8 @@ class OrchestratorAgent:
         return
 
     @staticmethod
-    def _summarize_text(text: str, limit: int = 240) -> str:
-        """Generate a short summary snippet for activity log."""
+    def _summarize_text(text: str, limit: int = 80) -> str:
+        """Generate a super concise snippet for activity log."""
         clean = " ".join(text.strip().split())
         if len(clean) <= limit:
             return clean
@@ -292,12 +292,21 @@ class OrchestratorAgent:
         instructions_text: str,
         completed: bool,
     ) -> None:
-        action = "conversation_completed" if completed else "instructions_updated"
+        """Upsert a single activity row per (ng_id, supplier_id), incrementing change_count."""
+        action = "completed" if completed else "updated"
         summary = self._summarize_text(instructions_text)
         await self.db_pool.execute(
             """
-            INSERT INTO orchestrator_activity (ng_id, supplier_id, action, summary, details, completed)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO orchestrator_activity (ng_id, supplier_id, action, summary, details, completed, change_count)
+            VALUES ($1, $2, $3, $4, $5, $6, 1)
+            ON CONFLICT (ng_id, supplier_id)
+            DO UPDATE SET
+                action = EXCLUDED.action,
+                summary = EXCLUDED.summary,
+                details = EXCLUDED.details,
+                completed = EXCLUDED.completed,
+                activity_timestamp = now(),
+                change_count = orchestrator_activity.change_count + 1
             """,
             self.ng_id,
             supplier_id,
