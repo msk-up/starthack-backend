@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS message (
     message_timestamp TIMESTAMPTZ NOT NULL DEFAULT now(),
     role TEXT NOT NULL, 
     message_text TEXT NOT NULL,
-    metadata JSONB -- Store email specific headers like Subject, Sender
+    metadata JSONB, -- Store email specific headers like Subject, Sender
+    completed BOOLEAN NOT NULL DEFAULT FALSE -- Whether this message completes the conversation
 );
 
 CREATE TABLE IF NOT EXISTS instructions (
@@ -62,6 +63,7 @@ CREATE TABLE IF NOT EXISTS email_config (
 
 -- MIGRATIONS: Add columns to existing tables if they don't exist
 ALTER TABLE supplier ADD COLUMN IF NOT EXISTS supplier_email TEXT;
+ALTER TABLE message ADD COLUMN IF NOT EXISTS completed BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Fix message role constraint to include 'supplier'
 ALTER TABLE message DROP CONSTRAINT IF EXISTS message_role_check;

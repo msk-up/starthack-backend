@@ -47,6 +47,7 @@ You might want to give them information about the progress of other agents as we
 their behavior and if requested by the user make smart decisions on how to reduce to overall price of the product through clever
 negotiation tactics advice to the other agents, which might include the recommendation to present the supplier with a  
 competing offer from another supplier that your agents are alo negotiating with.
+If you see during your anaylsis that one of the suppliers has made a final offer. Mark the negotiation as complete;
 """
 
 bedrock_client = boto3.client("bedrock-runtime", region_name=AWS_REGION)
