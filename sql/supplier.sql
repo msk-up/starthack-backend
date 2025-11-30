@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS instructions (
 CREATE TABLE IF NOT EXISTS product (
     product_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     supplier_id UUID NOT NULL REFERENCES supplier(supplier_id) ON DELETE CASCADE,
-    product_name TEXT NOT NULL
+    product_name TEXT NOT NULL,
+    supplier_name TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS orchestrator_activity (

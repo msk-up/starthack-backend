@@ -183,8 +183,12 @@ Address the supplier by name ({self.supplier_name}) in your message."""
             )
             # Strip reasoning tokens before sending email
             email_body = strip_reasoning_tokens(reply)
+            # Sanitize product name for subject line
+            clean_product = " ".join(
+                self.product.replace("\n", " ").replace("\r", " ").split()
+            )
             # Include supplier name and ref IDs in subject for tracking replies
-            subject = f"[{self.supplier_name}] [REF-{self.ng_id[:8]}-{self.sup_id[:8]}] Inquiry about {self.product}"
+            subject = f"[{self.supplier_name}] [REF-{self.ng_id[:8]}-{self.sup_id[:8]}] Inquiry about {clean_product}"
             await self.email_client.email_send(self.supplier_email, subject, email_body)
             logger.info(f"[Agent {self.ng_id}:{self.sup_id}] Email sent successfully")
         else:
@@ -248,8 +252,12 @@ Address the supplier by name ({self.supplier_name}) in your message."""
             )
             # Strip reasoning tokens before sending email
             email_body = strip_reasoning_tokens(reply)
+            # Sanitize product name for subject line
+            clean_product = " ".join(
+                self.product.replace("\n", " ").replace("\r", " ").split()
+            )
             # Include supplier name and ref IDs in subject for tracking replies
-            subject = f"Re: [{self.supplier_name}] [REF-{self.ng_id[:8]}-{self.sup_id[:8]}] {self.product} negotiation"
+            subject = f"Re: [{self.supplier_name}] [REF-{self.ng_id[:8]}-{self.sup_id[:8]}] {clean_product} negotiation"
             await self.email_client.email_send(self.supplier_email, subject, email_body)
             logger.info(f"[Agent {self.ng_id}:{self.sup_id}] Email sent successfully")
         else:
@@ -372,6 +380,7 @@ Conversation history:
             )
             result = json.loads(response["body"].read())
             summary_text = result["choices"][0]["message"]["content"]
+            summary_text = strip_reasoning_tokens(summary_text)
             return summary_text.strip()
         except Exception as exc:  # pragma: no cover - best effort
             logger.warning(

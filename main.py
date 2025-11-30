@@ -285,13 +285,28 @@ async def email_watcher():
                         ng_id = str(ng_row["ng_id"])
 
                 # Find the full supplier_id that starts with this prefix
-                sup_row = await db.fetchrow(
-                    "SELECT supplier_id FROM supplier WHERE CAST(supplier_id AS TEXT) LIKE $1",
-                    f"{sup_prefix}%",
-                )
-                if sup_row:
-                    supplier_id = str(sup_row["supplier_id"])
-                    logger.info(f"Matched supplier from subject: {supplier_id}")
+                # First try to match within the negotiation's agents (more specific)
+                if ng_id:
+                    sup_row = await db.fetchrow(
+                        "SELECT sup_id FROM agent WHERE ng_id = $1 AND CAST(sup_id AS TEXT) LIKE $2",
+                        ng_id,
+                        f"{sup_prefix}%",
+                    )
+                    if sup_row:
+                        supplier_id = str(sup_row["sup_id"])
+                        logger.info(
+                            f"Matched supplier from negotiation agents: {supplier_id}"
+                        )
+
+                # Fallback to global supplier lookup
+                if not supplier_id:
+                    sup_row = await db.fetchrow(
+                        "SELECT supplier_id FROM supplier WHERE CAST(supplier_id AS TEXT) LIKE $1",
+                        f"{sup_prefix}%",
+                    )
+                    if sup_row:
+                        supplier_id = str(sup_row["supplier_id"])
+                        logger.info(f"Matched supplier from subject: {supplier_id}")
 
             # Fallback: try to match by sender email if no REF tag
             if not supplier_id and supplier_row:

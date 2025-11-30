@@ -69,10 +69,14 @@ class EmailClient:
         if not self.email_address or not self.password:
             raise RuntimeError("User not logged in. Call email_login first.")
 
+        # Sanitize subject - remove newlines and carriage returns
+        clean_subject = subject.replace("\n", " ").replace("\r", " ").strip()
+        clean_subject = " ".join(clean_subject.split())  # collapse multiple spaces
+
         message = EmailMessage()
         message["From"] = self.email_address
         message["To"] = to_email
-        message["Subject"] = subject
+        message["Subject"] = clean_subject
         message.set_content(body)
 
         use_tls = self.smtp_port == 465
