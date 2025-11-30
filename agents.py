@@ -307,6 +307,94 @@ class OrchestratorAgent:
             completed,
         )
 
+    @staticmethod
+    def _format_messages_for_summary(
+        messages: list[dict[str, Any]], limit: int = 20
+    ) -> str:
+        """Flatten the latest conversation turns for summary prompts."""
+        if not messages:
+            return ""
+        tail = messages[-limit:]
+        lines = []
+        for msg in tail:
+            role = msg.get("role", "unknown")
+            timestamp = msg.get("timestamp") or ""
+            text = msg.get("text", "")
+            lines.append(f"{timestamp} {role}: {text}")
+        return "\n".join(lines)
+
+    async def _generate_completion_summary(
+        self,
+        supplier_id: str,
+        messages: list[dict[str, Any]],
+        fallback_text: str,
+    ) -> str:
+        history = self._format_messages_for_summary(messages)
+        if not history:
+            history = fallback_text
+
+        prompt = f"""Summarize the completed negotiation for supplier {supplier_id}.
+Product: {self.product}
+Provide 3-5 sentences covering the final offer, key terms (price, volume, delivery), and any remaining follow-up steps.
+Use clear, professional language.
+
+Conversation history:
+{history}
+"""
+
+        body = {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You summarize procurement negotiations into concise reports.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "max_tokens": 512,
+            "temperature": 0.3,
+        }
+
+        try:
+            response = self.client.invoke_model(
+                modelId="openai.gpt-oss-120b-1:0",
+                contentType="application/json",
+                accept="application/json",
+                body=json.dumps(body),
+            )
+            result = json.loads(response["body"].read())
+            summary_text = result["choices"][0]["message"]["content"]
+            return summary_text.strip()
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.warning(
+                f"[Orchestrator {self.ng_id}] Failed to generate summary for supplier {supplier_id}: {exc}"
+            )
+            return fallback_text
+
+    async def _save_summary(self, supplier_id: str, summary_text: str) -> None:
+        agent_row = await self.db_pool.fetchrow(
+            "SELECT agent_id FROM agent WHERE ng_id = $1 AND sup_id = $2",
+            self.ng_id,
+            supplier_id,
+        )
+        agent_id = (
+            agent_row["agent_id"] if agent_row and "agent_id" in agent_row else None
+        )
+
+        await self.db_pool.execute(
+            """
+            INSERT INTO negotiation_summary (ng_id, supplier_id, agent_id, summary_text)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (ng_id, supplier_id)
+            DO UPDATE SET summary_text = EXCLUDED.summary_text,
+                          agent_id = COALESCE(EXCLUDED.agent_id, negotiation_summary.agent_id),
+                          created_at = now()
+            """,
+            self.ng_id,
+            supplier_id,
+            agent_id,
+            summary_text,
+        )
+
     async def _build_conversation(self) -> list[dict[str, str]]:
         conversation: list[dict[str, str]] = []
         if self.sys_prompt:
@@ -536,6 +624,20 @@ RULES:
                     parsed_ng_id,
                     parsed_supplier_id,
                 )
+
+                # Generate and persist a final summary for this supplier
+                try:
+                    messages_for_summary = grouped.get(parsed_supplier_id, [])
+                    summary_text = await self._generate_completion_summary(
+                        parsed_supplier_id,
+                        messages_for_summary,
+                        instructions_text,
+                    )
+                    await self._save_summary(parsed_supplier_id, summary_text)
+                except Exception as summary_error:  # pragma: no cover - best effort
+                    logger.warning(
+                        f"[Orchestrator {self.ng_id}] Failed to save summary for supplier {parsed_supplier_id}: {summary_error}"
+                    )
 
             # Log orchestrator activity for this supplier
             try:

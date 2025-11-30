@@ -577,6 +577,52 @@ async def get_orchestrator_activity(
     }
 
 
+@app.get("/negotiation_summary/{negotiation_id}")
+async def get_negotiation_summary(
+    negotiation_id: str, supplier_id: Optional[str] = None
+) -> dict[str, Any]:
+    db = await get_pool()
+    params: list[Any] = [negotiation_id]
+    query = """
+        SELECT ns.summary_id,
+               ns.ng_id,
+               ns.supplier_id,
+               ns.agent_id,
+               ns.summary_text,
+               ns.created_at,
+               s.supplier_name
+        FROM negotiation_summary ns
+        LEFT JOIN supplier s ON ns.supplier_id = s.supplier_id
+        WHERE ns.ng_id = $1
+    """
+    if supplier_id:
+        query += " AND ns.supplier_id = $2"
+        params.append(supplier_id)
+    query += " ORDER BY ns.created_at DESC"
+
+    rows = await db.fetch(query, *params)
+    summaries = []
+    for row in rows:
+        summaries.append(
+            {
+                "summary_id": str(row["summary_id"]),
+                "supplier_id": str(row["supplier_id"]) if row["supplier_id"] else None,
+                "supplier_name": row["supplier_name"],
+                "agent_id": str(row["agent_id"]) if row["agent_id"] else None,
+                "summary": row["summary_text"],
+                "created_at": row["created_at"].isoformat()
+                if row["created_at"]
+                else None,
+            }
+        )
+
+    return {
+        "negotiation_id": negotiation_id,
+        "count": len(summaries),
+        "summaries": summaries,
+    }
+
+
 @app.get("/get_negotations")
 async def get_negotations() -> dict[str, Any]:
     db = await get_pool()

@@ -62,6 +62,16 @@ CREATE TABLE IF NOT EXISTS orchestrator_activity (
     completed BOOLEAN NOT NULL DEFAULT FALSE
 );
 
+CREATE TABLE IF NOT EXISTS negotiation_summary (
+    summary_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    ng_id UUID NOT NULL REFERENCES negotiation(ng_id) ON DELETE CASCADE,
+    supplier_id UUID REFERENCES supplier(supplier_id) ON DELETE CASCADE,
+    agent_id UUID REFERENCES agent(agent_id) ON DELETE SET NULL,
+    summary_text TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (ng_id, supplier_id)
+);
+
 -- NEW TABLE FOR EMAIL CONFIGURATION
 CREATE TABLE IF NOT EXISTS email_config (
     id SERIAL PRIMARY KEY,
@@ -100,13 +110,16 @@ ALTER TABLE instructions
 ALTER TABLE agent ADD COLUMN IF NOT EXISTS agent_id UUID;
 ALTER TABLE agent ALTER COLUMN agent_id SET DEFAULT gen_random_uuid();
 UPDATE agent SET agent_id = gen_random_uuid() WHERE agent_id IS NULL;
+
+ALTER TABLE negotiation_summary DROP CONSTRAINT IF EXISTS negotiation_summary_agent_id_fkey;
 ALTER TABLE agent DROP CONSTRAINT IF EXISTS agent_pkey;
 ALTER TABLE agent ADD CONSTRAINT agent_pkey PRIMARY KEY (agent_id);
-DO $$
-BEGIN
-    ALTER TABLE agent ADD CONSTRAINT agent_ng_sup_unique UNIQUE (ng_id, sup_id);
-EXCEPTION WHEN duplicate_object THEN NULL;
-END $$;
+ALTER TABLE negotiation_summary
+    ADD CONSTRAINT negotiation_summary_agent_id_fkey
+    FOREIGN KEY (agent_id) REFERENCES agent(agent_id) ON DELETE SET NULL;
+
+ALTER TABLE agent DROP CONSTRAINT IF EXISTS agent_ng_sup_unique;
+ALTER TABLE agent ADD CONSTRAINT agent_ng_sup_unique UNIQUE (ng_id, sup_id);
 
 -- Fix message role constraint to include 'supplier'
 ALTER TABLE message DROP CONSTRAINT IF EXISTS message_role_check;
