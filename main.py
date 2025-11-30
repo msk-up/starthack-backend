@@ -287,6 +287,23 @@ async def negotiation_status(negotiation_id: str) -> dict[str, Any]:
 
     return {"negotiation_id": negotiation_id, "agents": response}
 
+@app.get("/get_negotations")
+async def get_negotations() -> dict[str, Any]:
+    db = await get_pool()
+    rows = await db.fetch("SELECT * FROM negotiation")
+
+    response = []
+    for row in rows:
+        response.append(
+            {
+                "negotiation_id": str(row["ng_id"]),
+                "product": row["product"],
+                "strategy": row["strategy"],
+                "status": row["status"],
+            }
+        )
+
+    return {"negotiations": response}
 
 def main() -> None:
     import uvicorn
