@@ -4,11 +4,10 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
-from botocore import client
 from dotenv import load_dotenv
 
 from agents import NegotiationAgent, OrchestratorAgent
-from router import EmailEventRouter, EmailEvent, NegotiationSession
+from router import EmailEventRouter, NegotiationSession
 
 load_dotenv()
 

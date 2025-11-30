@@ -1,4 +1,4 @@
-from typing import Any, Callable, Awaitable, Coroutine
+from typing import Any, Callable, Coroutine
 from dataclasses import dataclass, field
 import asyncio
 
@@ -17,14 +17,19 @@ class EmailEvent:
     raw: dict[str, Any] = field(default_factory=dict)  # Store provider-specific data
 
 
+def _make_key(ng_id: str, supplier_id: str) -> str:
+    """Create a unique key for a negotiation + supplier pair."""
+    return f"{ng_id}:{supplier_id}"
+
+
 class EmailEventRouter:
     """
     Routes incoming email events to the appropriate handlers.
 
     Flow:
-    1. Register handlers by supplier_id
+    1. Register handlers by (ng_id, supplier_id) pair
     2. When email arrives, call push() with EmailEvent
-    3. Router looks up handler by supplier_id and spawns async task
+    3. Router looks up handler by composite key and spawns async task
     """
 
     def __init__(self):
@@ -37,11 +42,13 @@ class EmailEventRouter:
 
     def register(
         self,
+        ng_id: str,
         supplier_id: str,
         handler: Callable[[EmailEvent], Coroutine[Any, Any, None]],
     ) -> None:
-        """Register a handler for a specific supplier_id."""
-        self._handlers[supplier_id] = handler
+        """Register a handler for a specific (ng_id, supplier_id) pair."""
+        key = _make_key(ng_id, supplier_id)
+        self._handlers[key] = handler
 
     def set_default_handler(
         self, handler: Callable[[EmailEvent], Coroutine[Any, Any, None]]
@@ -49,20 +56,23 @@ class EmailEventRouter:
         """Set a fallback handler for unmatched events."""
         self._default_handler = handler
 
-    def unregister(self, supplier_id: str) -> None:
-        """Remove a handler for a supplier_id."""
-        self._handlers.pop(supplier_id, None)
+    def unregister(self, ng_id: str, supplier_id: str) -> None:
+        """Remove a handler for a (ng_id, supplier_id) pair."""
+        key = _make_key(ng_id, supplier_id)
+        self._handlers.pop(key, None)
 
     async def push(self, event: EmailEvent) -> None:
         """
         Push an email event to be routed.
-        Looks up handler by supplier_id and spawns async task.
+        Looks up handler by (ng_id, supplier_id) and spawns async task.
         """
         handler = None
 
-        if event.supplier_id and event.supplier_id in self._handlers:
-            handler = self._handlers[event.supplier_id]
-        elif self._default_handler:
+        if event.ng_id and event.supplier_id:
+            key = _make_key(event.ng_id, event.supplier_id)
+            handler = self._handlers.get(key)
+
+        if not handler and self._default_handler:
             handler = self._default_handler
 
         if handler:
@@ -95,7 +105,7 @@ class NegotiationSession:
     def add_agent(self, supplier_id: str, agent: NegotiationAgent) -> None:
         """Add a negotiation agent and register its email handler."""
         self._agents[supplier_id] = agent
-        self.router.register(supplier_id, self._make_handler(supplier_id))
+        self.router.register(self.ng_id, supplier_id, self._make_handler(supplier_id))
 
     def _make_handler(
         self, supplier_id: str
@@ -128,4 +138,4 @@ class NegotiationSession:
     def cleanup(self) -> None:
         """Unregister all handlers when session ends."""
         for supplier_id in self._agents:
-            self.router.unregister(supplier_id)
+            self.router.unregister(self.ng_id, supplier_id)
