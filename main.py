@@ -193,12 +193,12 @@ Context:
         "messages": [
             {
                 "role": "system",
-                "content": "You summarize procurement negotiations for executives with crisp status updates.",
+                "content": "You summarize procurement negotiations. Use plain text only, no markdown, no bullet points, no special formatting. Be concise.",
             },
             {"role": "user", "content": prompt},
         ],
-        "max_tokens": 400,
-        "temperature": 0.4,
+        "max_tokens": 300,
+        "temperature": 0.3,
     }
 
     try:
