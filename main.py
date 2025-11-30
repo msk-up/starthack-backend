@@ -16,7 +16,7 @@ import boto3
 
 # Local imports
 from email_client import EmailClient
-from agents import NegotiationAgent, OrchestratorAgent
+from agents import NegotiationAgent, OrchestratorAgent, strip_reasoning_tokens
 from router import EmailEventRouter, NegotiationSession
 
 load_dotenv()
@@ -210,6 +210,7 @@ Context:
         )
         result = json.loads(response["body"].read())
         overview_text = result["choices"][0]["message"]["content"]
+        overview_text = strip_reasoning_tokens(overview_text)
         return overview_text.strip()
     except Exception as exc:  # pragma: no cover - best effort
         logger.warning(
@@ -733,7 +734,7 @@ async def get_orchestrator_activity(
     }
 
 
-@app.get("/negotiation_summary/{negotiation_id}")
+@app.get("/negotiation_summary/{negotiation_id}/{supplier_id}")
 async def get_negotiation_summary(
     negotiation_id: str, supplier_id: Optional[str] = None
 ) -> dict[str, Any]:
