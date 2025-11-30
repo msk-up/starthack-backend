@@ -24,7 +24,7 @@ FRONTEND_ORIGINS = os.environ.get("FRONTEND_ORIGINS", "")
 
 NEGOTIATOR_AGENT_SYSTEM_PROMPT = """
 You are a skilled negotation agent representing a buyer in a procurment process. Your goal is to win the best possible deal for the
-the company. While your are neogotiating an Supervisor agent is monetoring your progress and giving you new 
+the company. While your are negotiating an Supervisor agent is monetoring your progress and giving you new 
 instructions every new step of the negotiation. Follow their instructions carefully and adapt your strategy accordingly
 Further instructions might be provided following this. Make sure to follow them closely.
 """
@@ -134,22 +134,27 @@ def call_bedrock(prompt: str, system_prompt: str = "") -> str:
 
 
 # FIXED SYNTAX ERROR HERE
-async def crate_negotiation_agent(supplier_id: str,tactics: str, product: str) -> str:
+async def crate_negotiation_agent(supplier_id: str, tactics: str, product: str) -> str:
     db = await get_pool()
-    row = await db.fetch("SELECT * FROM supplier WHERE supplier_name = $1 LIMIT 1", supplier_id)
-    if not row: return ""
-    insights = row[0]['insights']
-    prompt = f'''
+    row = await db.fetch(
+        "SELECT * FROM supplier WHERE supplier_name = $1 LIMIT 1", supplier_id
+    )
+    if not row:
+        return ""
+    insights = row[0]["insights"]
+    prompt = f"""
     Negotiate for {product} with tactics {tactics}. Insights: {insights}
-    '''
+    """
     return prompt
 
 
 # --- NEW EMAIL ENDPOINTS ---
 
+
 class LoginRequest(BaseModel):
     email: str
     password: str
+
 
 @app.post("/email/login")
 async def email_login_endpoint(creds: LoginRequest):
@@ -162,10 +167,12 @@ async def email_login_endpoint(creds: LoginRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
 class SendEmailRequest(BaseModel):
     to_email: str
     subject: str
     body: str
+
 
 @app.post("/email/send")
 async def email_send_endpoint(req: SendEmailRequest):
@@ -178,7 +185,9 @@ async def email_send_endpoint(req: SendEmailRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 # ---------------------------
+
 
 class NegotiationRequest(BaseModel):
     product: str
@@ -287,6 +296,7 @@ async def negotiation_status(negotiation_id: str) -> dict[str, Any]:
 
     return {"negotiation_id": negotiation_id, "agents": response}
 
+
 @app.get("/get_negotations")
 async def get_negotations() -> dict[str, Any]:
     db = await get_pool()
@@ -304,6 +314,7 @@ async def get_negotations() -> dict[str, Any]:
         )
 
     return {"negotiations": response}
+
 
 def main() -> None:
     import uvicorn
