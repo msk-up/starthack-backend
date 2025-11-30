@@ -3,3 +3,4 @@ uvicorn
 asyncpg
 boto3
 dotenv
+uuid
